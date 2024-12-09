@@ -10,7 +10,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>BarrageGrab</RootNamespace>
     <AssemblyName>WssBarrageServer</AssemblyName>
-    <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
     <PublishUrl>publish\</PublishUrl>
@@ -136,11 +136,12 @@
   <ItemGroup>
     <Compile Include="AppRuntime.cs" />
     <Compile Include="Appsetting.cs" />
-    <Compile Include="Forms\FormView.cs">
+    <Compile Include="AutoReplyService.cs" />
+    <Compile Include="FormAutoReply.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Forms\FormView.Designer.cs">
-      <DependentUpon>FormView.cs</DependentUpon>
+    <Compile Include="FormView.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Include="Forms\Models\RoomCacheItem.cs" />
     <Compile Include="Forms\RoomDetail.cs">

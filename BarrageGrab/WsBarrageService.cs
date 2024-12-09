@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -17,11 +17,17 @@ using BarrageGrab.Modles.JsonEntity;
 using BarrageGrab.Modles.ProtoEntity;
 using System.Drawing;
 using System.Collections.Concurrent;
+using System.Threading; 
+using System.Runtime.InteropServices; 
+using System.Windows.Forms;
 
 namespace BarrageGrab
 {
     /// <summary>
-    /// 弹幕服务
+    /// 弹幕服务长时间无操作，已暂停播放
+    //累计节能13分钟
+    //使用客户端免弹窗
+    //继续播放
     /// </summary>
     public class WsBarrageService
     {
@@ -29,11 +35,28 @@ namespace BarrageGrab
         Dictionary<string, UserState> socketList = new Dictionary<string, UserState>();
         //礼物计数缓存
         ConcurrentDictionary<string, Tuple<int, DateTime>> giftCountCache = new ConcurrentDictionary<string, Tuple<int, DateTime>>();
-        Timer dieout = new Timer(10000);
-        Timer giftCountTimer = new Timer(10000);
+        System.Timers.Timer dieout = new System.Timers.Timer(10000);
+        System.Timers.Timer giftCountTimer = new System.Timers.Timer(10000);
         WssBarrageGrab grab = new WssBarrageGrab();
         Appsetting Appsetting = Appsetting.Current;
         bool debug = false;
+        private AutoReplyService autoReplyService;  
+        private System.Timers.Timer keepAliveTimer;
+
+        /// <summary>
+        /// 自动回复服务
+        /// </summary>
+        public AutoReplyService AutoReplyService
+        {
+            get
+            {
+                if (autoReplyService == null)
+                {
+                    autoReplyService = new AutoReplyService();
+                }
+                return autoReplyService;
+            }
+        }
 
         /// <summary>
         /// 服务关闭后触发
@@ -79,6 +102,14 @@ namespace BarrageGrab
             this.socketServer = socket;
             //dieout.Start();
             giftCountTimer.Start();
+
+            // 启用AI匹配
+            AutoReplyService.SetAIMatching(true);
+
+            // 初始化保活定时器
+            keepAliveTimer = new System.Timers.Timer(5000); // 每5秒检查一次
+            keepAliveTimer.Elapsed += KeepAlive_Elapsed;
+            keepAliveTimer.Start();
         }
 
         private void GiftCountTimer_Elapsed(object sender, ElapsedEventArgs e)
@@ -146,7 +177,7 @@ namespace BarrageGrab
         {
             var rinfo = AppRuntime.RoomCaches.GetCachedWebRoomInfo(msg.RoomId.ToString());
             var roomName = (rinfo?.Owner?.Nickname ?? ("直播间" + (msg.WebRoomId == 0 ? msg.RoomId : msg.WebRoomId)));
-            var text = $"{DateTime.Now.ToString("HH:mm:ss")} [{roomName}] [{barType}]";
+            var text = $"{DateTime.Now.ToString("HH:mm:ss")} [{roomName}] [{barType}]" ;
 
             if (msg.User != null)
             {
@@ -331,7 +362,6 @@ namespace BarrageGrab
             var msgType = PackMsgType.关注消息;
             PrintMsg(enty, msgType);
             var pack = new BarrageMsgPack(enty.ToJson(), msgType, e.Process);
-            var json = JsonConvert.SerializeObject(pack);
             Broadcast(pack);
         }
 
@@ -362,7 +392,6 @@ namespace BarrageGrab
 
             //shareTarget: (112:好友),(1微信)(2朋友圈)(3微博)(5:qq)(4:qq空间),shareType: 1            
             var pack = new BarrageMsgPack(enty.ToJson(), msgType, e.Process);
-            var json = JsonConvert.SerializeObject(pack);
             Broadcast(pack);
         }
 
@@ -385,7 +414,6 @@ namespace BarrageGrab
             var msgType = PackMsgType.进直播间;
             PrintMsg(enty, msgType);
             var pack = new BarrageMsgPack(enty.ToJson(), msgType, e.Process);
-            var json = JsonConvert.SerializeObject(pack);
             Broadcast(pack);
         }
 
@@ -429,6 +457,71 @@ namespace BarrageGrab
 
             var msgType = PackMsgType.弹幕消息;
             PrintMsg(enty, msgType);
+
+            Console.WriteLine($"[自动回复] 检查弹幕: {msg.Content}");
+            string reply = AutoReplyService.GetReply(msg.Content);
+            if (!string.IsNullOrEmpty(reply))
+            {
+                Console.WriteLine($"[自动回复] 准备发送回复: {reply}");
+                // 创建回复消息
+                var replyMsg = new Msg()
+                {
+                    MsgId = DateTime.Now.Ticks,  // 使用时间戳作为消息ID
+                    Content = reply,
+                    RoomId = msg.Common.roomId,
+                    WebRoomId = AppRuntime.RoomCaches.GetCachedWebRoomid(msg.Common.roomId.ToString()),
+                    User = new MsgUser { 
+                        Nickname = "自动回复",
+                        DisplayId = "0",
+                        Id = 0,
+                        Level = 0
+                    },
+                };
+
+                // 发送回复到浏览器
+                try
+                {
+                    // 查找包含"抖音直播间"的窗口
+                    IntPtr hWnd = IntPtr.Zero;
+                    WinApi.EnumWindows((hwnd, lParam) =>
+                    {
+                        StringBuilder title = new StringBuilder(256);
+                        WinApi.GetWindowText(hwnd, title, 256);
+                        if (title.ToString().Contains("抖音直播间"))
+                        {
+                            hWnd = hwnd;
+                            return false; // 停止枚举
+                        }
+                        return true; // 继续枚举
+                    }, IntPtr.Zero);
+
+                    if (hWnd != IntPtr.Zero)
+                    {
+                        // 激活浏览器窗口
+                        WinApi.SetForegroundWindow(hWnd);
+                        System.Threading.Thread.Sleep(100);
+
+                        // 模拟输入文本
+                        SendKeys.SendWait(reply);
+                        System.Threading.Thread.Sleep(100);
+                        SendKeys.SendWait("{ENTER}");
+                        
+                        Console.WriteLine($"[自动回复] 已发送回复到浏览器");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[自动回复] 未找到抖音直播间窗口");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"发送回复到浏览器失败: {ex.Message}");
+                }
+
+                // 广播回复消息
+                var replyPack = new BarrageMsgPack(replyMsg.ToJson(), PackMsgType.弹幕消息, e.Process);
+                Broadcast(replyPack);
+            }
 
             var pack = new BarrageMsgPack(enty.ToJson(), msgType, e.Process);
             Broadcast(pack);
@@ -592,6 +685,8 @@ namespace BarrageGrab
             grab.Dispose();
 
             this.OnClose?.Invoke(this, EventArgs.Empty);
+            keepAliveTimer?.Stop();
+            keepAliveTimer?.Dispose();
         }
 
         class UserState
@@ -623,6 +718,75 @@ namespace BarrageGrab
             public ConsoleColor Color { get; set; }
 
             public PackMsgType MsgType { get; set; }
+        }
+
+        private const string PAUSE_TEXT = "长时间无操作，已暂停播放";
+        private const string CONTINUE_TEXT = "继续播放";
+
+        private void KeepAlive_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            try
+            {
+                // 查找直播间窗口
+                IntPtr hWnd = IntPtr.Zero;
+                WinApi.EnumWindows((hwnd, lParam) =>
+                {
+                    StringBuilder title = new StringBuilder(256);
+                    WinApi.GetWindowText(hwnd, title, 256);
+                    if (title.ToString().Contains("抖音直播间"))
+                    {
+                        hWnd = hwnd;
+                        return false;
+                    }
+                    return true;
+                }, IntPtr.Zero);
+
+                if (hWnd != IntPtr.Zero)
+                {
+                    // 查找包含"继续播放"文本的子窗口
+                    IntPtr continueButtonHwnd = IntPtr.Zero;
+                    WinApi.EnumChildWindows(hWnd, (childHwnd, lParam) =>
+                    {
+                        StringBuilder text = new StringBuilder(256);
+                        WinApi.GetWindowText(childHwnd, text, 256);
+                        
+                        if (text.ToString().Contains(CONTINUE_TEXT))
+                        {
+                            continueButtonHwnd = childHwnd;
+                            return false;
+                        }
+                        return true;
+                    }, IntPtr.Zero);
+
+                    if (continueButtonHwnd != IntPtr.Zero)
+                    {
+                        // 获取按钮位置
+                        WinApi.RECT buttonRect;
+                        WinApi.GetWindowRect(continueButtonHwnd, out buttonRect);
+
+                        // 计算按钮中心点
+                        int buttonX = buttonRect.Left + (buttonRect.Right - buttonRect.Left) / 2;
+                        int buttonY = buttonRect.Top + (buttonRect.Bottom - buttonRect.Top) / 2;
+
+                        // 模拟鼠标点击
+                        WinApi.SetForegroundWindow(hWnd);
+                        System.Threading.Thread.Sleep(100);
+                        WinApi.SetCursorPos(buttonX, buttonY);
+                        WinApi.mouse_event(WinApi.MOUSEEVENTF_LEFTDOWN | WinApi.MOUSEEVENTF_LEFTUP, buttonX, buttonY, 0, 0);
+
+                        Console.WriteLine("[保活] 找到并点击了继续播放按钮");
+                    }
+                    else
+                    {
+                        // 如果找不到按钮，可能还没有暂停，不需要处理
+                        Console.WriteLine("[保活] 未发现暂停状态，无需处理");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[保活] 错误: {ex.Message}");
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Sockets;
@@ -6,6 +6,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Windows.Forms;
 
 namespace BarrageGrab
 {
@@ -20,6 +21,10 @@ namespace BarrageGrab
                 return;
             }
 
+            // 启用 Windows Forms 的单线程单元
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
             WinApi.SetConsoleCtrlHandler(cancelHandler, true);//捕获控制台关闭
             WinApi.DisableQuickEditMode();//禁用控制台快速编辑模式
             if (WinApi.GetConsoleWindow() != IntPtr.Zero)
@@ -30,7 +35,6 @@ namespace BarrageGrab
             AppRuntime.WssService.Grab.Proxy.SetUpstreamProxy(Appsetting.Current.UpstreamProxy);
 
             bool exited = false;
-            bool formExited = false;
             AppRuntime.WssService.StartListen();
 
             Console.ForegroundColor = ConsoleColor.Green;
@@ -40,49 +44,28 @@ namespace BarrageGrab
             {
                 Console.Title = $"抖音弹幕监听推送 [{AppRuntime.WssService.ServerLocation}]";
             }
+
             FormView mainForm = null;
 
-            if (Appsetting.Current.ShowWindow)
-            {
-                var uiThread = new Thread(new ThreadStart(() =>
-                {
-                    mainForm = new FormView();
-                    //开启消息循环
-                    System.Windows.Forms.Application.Run(mainForm);
-                    formExited = true;
-                }));
-                uiThread.SetApartmentState(ApartmentState.STA);
-                uiThread.IsBackground = true;
-                uiThread.Start();
-            }
-
+            mainForm = new FormView();
+            
+            // 注册服务关闭事件
             AppRuntime.WssService.OnClose += (s, e) =>
             {
-                //退出程序
                 exited = true;
+                if (!mainForm.IsDisposed)
+                {
+                    mainForm.Invoke(new Action(() =>
+                    {
+                        mainForm.Close();
+                    }));
+                }
             };
 
-            while (!exited)
-            {
-                if (formExited && !exited)
-                {
-                    AppRuntime.WssService.Close();
-                }                    
-                Thread.Sleep(500);
-            }
+            // 在主线程中运行窗口
+            Application.Run(mainForm);
 
             Logger.PrintColor("服务器已关闭...");
-
-            //if (!mainForm.IsDisposed)
-            //{
-            //    mainForm.Invoke(new Action(() =>
-            //    {
-            //        mainForm.Close();
-            //    }));
-            //}            
-
-            //退出程序,不显示 按任意键退出
-            //Environment.Exit(0);
         }
 
         private static WinApi.ControlCtrlDelegate cancelHandler = new WinApi.ControlCtrlDelegate((CtrlType) =>
@@ -101,16 +84,10 @@ namespace BarrageGrab
             return false;
         });
 
-        //检测程序是否多开
         private static bool CheckAlreadyRunning()
         {
-            const string mutexName = "DyBarrageGrab";
-            // Try to create a new named mutex.
-            bool createdNew;
-            using (Mutex mutex = new Mutex(true, mutexName, out createdNew))
-            {
-                return !createdNew;
-            }
+            var processes = System.Diagnostics.Process.GetProcessesByName(System.Diagnostics.Process.GetCurrentProcess().ProcessName);
+            return processes.Length > 1;
         }
     }
 }
